@@ -1,0 +1,59 @@
+plugins {
+    id 'application'
+}
+
+group = 'local.chat'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+// Keep current source layout: src/Main.java
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+}
+
+dependencies {
+    // Place any external jars in lib/ to include on compile/runtime
+    implementation fileTree(dir: 'lib', include: ['*.jar'])
+}
+
+application {
+    // Main class without package
+    mainClass = 'Main'
+}
+
+tasks.named('run') {
+    // Allow interactive console input in `gradle run`
+    standardInput = System.in
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': 'Main'
+        )
+    }
+}
+
+// Use Java 25 via Gradle Toolchains
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+// Compile against Java 25 APIs and target class format 25
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+}
+
