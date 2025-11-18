@@ -47,4 +47,4 @@
 - `gradlew`, `gradlew.bat`, `gradle/` — Gradle Wrapper
 
 ## 라이선스
-명시되지 않았습니다(별도 LICENSE 파일 없음). 필요 시 라이선스를 추가하세요.
+MIT License (`LICENSE` 참조).
