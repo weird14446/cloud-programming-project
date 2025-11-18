@@ -72,4 +72,30 @@ gradle-app.setting
 # Java heap dump
 *.hprof
 
+# Editor & OS cruft
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local binaries & temp
+/bin/
+*.tmp
+*.temp
+*.bak
+
+# Secrets & credentials
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.truststore
+
 # End of https://www.toptal.com/developers/gitignore/api/java,gradle,git,dotenv
