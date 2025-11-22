@@ -4,6 +4,9 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -17,7 +20,12 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.LineBorder;
+import javax.swing.plaf.basic.BasicScrollBarUI;
 
 public class Main {
     public static void main(String[] args) {
@@ -307,6 +315,7 @@ public class Main {
 
     // Swing GUI client window
     private static final class ChatWindow extends JFrame {
+        private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd a h:mm");
         private static final int GRID = 8;
 
         private final String host;
@@ -314,13 +323,19 @@ public class Main {
         private final String nickname;
         private final ChatClientCore core;
 
-        private final JTextArea messages = new JTextArea();
-        private final JTextField input = new JTextField();
+        private final JPanel messageList = new JPanel();
+        private JScrollPane messageScroll;
+        private final PromptTextField input = new PromptTextField("텍스트 메시지를 입력하세요...)");
         private final JButton sendBtn = new AccentButton("Send");
         private final JLabel status = new JLabel();
+        private final JLabel warningLabel = new JLabel("내용을 입력한 후 전송할 수 있습니다.");
 
         private JPanel serverRail;
         private JPanel membersColumn;
+        private Border inputDefaultBorder;
+        private Timer warningTimer;
+        private String lastSenderKey;
+        private MessageKind lastKind;
 
         private ChatWindow(String host, int port, String nickname) {
             super("Chat - " + nickname + " @ " + host + ":" + port);
@@ -339,28 +354,36 @@ public class Main {
             setSize(980, 620);
             setLocationByPlatform(true);
 
-            messages.setEditable(false);
-            messages.setLineWrap(true);
-            messages.setWrapStyleWord(true);
-            messages.setFont(messages.getFont().deriveFont(Font.PLAIN, 15f));
-            messages.setForeground(Theme.textPrimary);
-            messages.setBackground(Theme.surfaceElevated);
-            messages.setMargin(new Insets(GRID, GRID, GRID, GRID));
+            Font baseFont = resolveBaseFont();
+            Font chatFont = baseFont.deriveFont(Font.PLAIN, 15f);
+            Font buttonFont = baseFont.deriveFont(Font.BOLD, 15f);
 
-            input.setFont(messages.getFont());
+            messageList.setLayout(new BoxLayout(messageList, BoxLayout.Y_AXIS));
+            messageList.setAlignmentX(Component.LEFT_ALIGNMENT);
+            messageList.setBackground(Theme.surfaceElevated);
+            messageList.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
+
+            input.setFont(chatFont);
             input.setForeground(Theme.textPrimary);
             input.setCaretColor(Theme.accentSoft);
             input.setOpaque(true);
             input.setBackground(Theme.surface);
             input.setBorder(BorderFactory.createEmptyBorder(GRID, GRID * 2, GRID, GRID * 2));
+            inputDefaultBorder = input.getBorder();
 
-            sendBtn.setFont(sendBtn.getFont().deriveFont(Font.BOLD, 15f));
+            sendBtn.setFont(buttonFont);
 
-            JScrollPane scroll = new JScrollPane(messages);
-            scroll.setBorder(BorderFactory.createEmptyBorder());
-            scroll.getViewport().setBackground(Theme.surfaceElevated);
-            scroll.getViewport().setOpaque(true);
-            scroll.setOpaque(false);
+            JPanel messageWrapper = new JPanel(new BorderLayout());
+            messageWrapper.setOpaque(false);
+            messageWrapper.add(messageList, BorderLayout.NORTH); // 메시지를 항상 상단부터 쌓기
+
+            messageScroll = new JScrollPane(messageWrapper);
+            messageScroll.setBorder(BorderFactory.createEmptyBorder());
+            messageScroll.getViewport().setBackground(Theme.surfaceElevated);
+            messageScroll.getViewport().setOpaque(true);
+            messageScroll.setOpaque(false);
+            applyScrollBarStyling(messageScroll); // 메시지 영역 스크롤바를 다크 테마로 통일
+            applyScrollBarStyling(messageScroll); // 메시지 영역 스크롤바를 다크 테마로 통일
 
             GradientPanel background = new GradientPanel();
             background.setLayout(new BorderLayout(0, GRID * 2));
@@ -375,7 +398,7 @@ public class Main {
 
             serverRail = buildServerRail();
             JPanel channelColumn = buildChannelColumn();
-            JPanel conversation = buildConversationPanel(scroll);
+            JPanel conversation = buildConversationPanel(messageScroll);
             membersColumn = buildMembersColumn();
 
             for (JComponent block : new JComponent[] { serverRail, channelColumn, conversation, membersColumn }) {
@@ -395,9 +418,12 @@ public class Main {
 
             Runnable sendAction = () -> {
                 String text = input.getText();
-                if (text == null) return;
-                String msg = text.trim();
-                if (msg.isEmpty()) return;
+                String msg = text == null ? "" : text.trim();
+                if (msg.isEmpty()) {
+                    showInputWarning();
+                    return;
+                }
+                clearInputWarning();
                 core.send(msg);
                 input.setText("");
                 if ("/quit".equalsIgnoreCase(msg)) {
@@ -407,6 +433,7 @@ public class Main {
 
             sendBtn.addActionListener(e -> sendAction.run());
             input.addActionListener(e -> sendAction.run());
+            attachInputWatcher();
 
             addWindowListener(new WindowAdapter() {
                 @Override public void windowClosing(WindowEvent e) {
@@ -479,6 +506,7 @@ public class Main {
             column.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
             column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
             column.setPreferredSize(new Dimension(220, Integer.MAX_VALUE));
+            column.setMaximumSize(new Dimension(260, Integer.MAX_VALUE)); // keep list width bounded without stretching rows
 
             JLabel title = new JLabel("The Lab");
             title.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -539,9 +567,23 @@ public class Main {
             composer.add(input, BorderLayout.CENTER);
             composer.add(sendBtn, BorderLayout.EAST);
 
+            warningLabel.setFont(warningLabel.getFont().deriveFont(Font.PLAIN, 12f));
+            warningLabel.setForeground(Theme.danger);
+            warningLabel.setVisible(false);
+
+            JPanel warningWrap = new JPanel(new BorderLayout());
+            warningWrap.setOpaque(false);
+            warningWrap.setBorder(new EmptyBorder(4, GRID * 2, 0, GRID * 2));
+            warningWrap.add(warningLabel, BorderLayout.WEST);
+
+            JPanel composerStack = new JPanel(new BorderLayout());
+            composerStack.setOpaque(false);
+            composerStack.add(composer, BorderLayout.CENTER);
+            composerStack.add(warningWrap, BorderLayout.SOUTH);
+
             conversation.add(header, BorderLayout.NORTH);
             conversation.add(timeline, BorderLayout.CENTER);
-            conversation.add(composer, BorderLayout.SOUTH);
+            conversation.add(composerStack, BorderLayout.SOUTH);
             return conversation;
         }
 
@@ -580,6 +622,8 @@ public class Main {
             row.setBorder(new EmptyBorder(GRID, GRID * 2, GRID, GRID * 2));
             row.setLayout(new BorderLayout(GRID, 0));
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            row.setPreferredSize(new Dimension(Integer.MAX_VALUE, 44));
+            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 44)); // fixed height to prevent vertical stretch
 
             JPanel indicator = new JPanel();
             indicator.setPreferredSize(new Dimension(4, 4));
@@ -615,6 +659,8 @@ public class Main {
             row.setOpaque(false);
             row.setBorder(new EmptyBorder(GRID, 0, GRID, 0));
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            row.setPreferredSize(new Dimension(Integer.MAX_VALUE, 60));
+            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60)); // fixed height to avoid stretching
 
             RoundedPanel avatar = new RoundedPanel(999);
             avatar.setBackground(accent);
@@ -656,6 +702,18 @@ public class Main {
             label.setForeground(fg);
             chip.add(label);
             return chip;
+        }
+
+        private RoundedPanel createPresencePill(String text) {
+            RoundedPanel pill = new RoundedPanel(999);
+            pill.setBackground(new Color(53, 59, 82));
+            pill.setBorder(new EmptyBorder(4, 10, 4, 10));
+            JLabel label = new JLabel(text);
+            label.setOpaque(false);
+            label.setFont(label.getFont().deriveFont(Font.BOLD, 12f));
+            label.setForeground(Theme.textSecondary);
+            pill.add(label);
+            return pill;
         }
 
         private JComponent createAvatarChip() {
@@ -709,6 +767,11 @@ public class Main {
             channelLabel.setFont(channelLabel.getFont().deriveFont(Font.BOLD, 22f));
             channelLabel.setForeground(Theme.textPrimary);
 
+            JPanel titleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, GRID, 0));
+            titleRow.setOpaque(false);
+            titleRow.add(channelLabel);
+            titleRow.add(createPresencePill("3 online"));
+
             JLabel subtitle = new JLabel("Connected to " + host + ":" + port + " as " + nickname);
             subtitle.setFont(subtitle.getFont().deriveFont(Font.PLAIN, 13f));
             subtitle.setForeground(Theme.textSecondary);
@@ -719,7 +782,7 @@ public class Main {
             JPanel text = new JPanel();
             text.setOpaque(false);
             text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
-            text.add(channelLabel);
+            text.add(titleRow);
             text.add(Box.createVerticalStrut(4));
             text.add(subtitle);
             text.add(Box.createVerticalStrut(2));
@@ -751,9 +814,135 @@ public class Main {
 
         private void appendMessage(String line) {
             SwingUtilities.invokeLater(() -> {
-                messages.append(line + "\n");
-                messages.setCaretPosition(messages.getDocument().getLength());
+                ChatMessage message = parseMessage(line);
+                if (message != null) {
+                    addMessageToTimeline(message);
+                }
             });
+        }
+
+        private ChatMessage parseMessage(String line) {
+            if (line == null) return null;
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) return null;
+
+            MessageKind kind = MessageKind.SYSTEM;
+            String sender = "System";
+            String body = trimmed;
+
+            if (trimmed.startsWith("**")) {
+                body = trimmed.replace("**", "").trim();
+            } else if (trimmed.toLowerCase(Locale.ROOT).startsWith("[system]")) {
+                body = trimmed.substring(8).trim();
+            } else if (trimmed.startsWith("[") && trimmed.contains("]")) {
+                int end = trimmed.indexOf(']');
+                if (end > 1) {
+                    sender = trimmed.substring(1, end);
+                    body = trimmed.substring(end + 1).trim();
+                    if ("system".equalsIgnoreCase(sender) || sender.toLowerCase(Locale.ROOT).contains("error")) {
+                        sender = "System";
+                        kind = MessageKind.SYSTEM;
+                    } else {
+                        kind = nickname.equals(sender) ? MessageKind.SELF : MessageKind.PEER;
+                    }
+                }
+            }
+
+            String time = LocalDateTime.now().format(TIME_FORMAT);
+            return new ChatMessage(sender, body, kind, time);
+        }
+
+        private void addMessageToTimeline(ChatMessage msg) {
+            boolean sameSender = lastSenderKey != null
+                && lastSenderKey.equals(senderKey(msg))
+                && msg.kind != MessageKind.SYSTEM
+                && lastKind != MessageKind.SYSTEM;
+            int gap = messageList.getComponentCount() == 0 ? 0 : (sameSender ? 4 : 14);
+            if (gap > 0) {
+                messageList.add(Box.createVerticalStrut(gap));
+            }
+
+            if (msg.kind == MessageKind.SYSTEM) {
+                messageList.add(buildSystemSeparator(msg));
+            } else {
+                if (!sameSender) {
+                    messageList.add(buildGroupHeader(msg)); // 새 그룹 시작 시 닉네임 헤더 추가
+                    messageList.add(Box.createVerticalStrut(5));
+                }
+                messageList.add(buildMessageBubble(msg));
+            }
+
+            lastSenderKey = senderKey(msg);
+            lastKind = msg.kind;
+
+            messageList.revalidate();
+            SwingUtilities.invokeLater(() -> {
+                JScrollBar bar = messageScroll.getVerticalScrollBar();
+                bar.setValue(bar.getMaximum());
+            });
+        }
+
+        private String senderKey(ChatMessage msg) {
+            return msg.kind == MessageKind.SYSTEM ? "SYSTEM" : msg.sender;
+        }
+
+        private JComponent buildMessageBubble(ChatMessage msg) {
+            JPanel row = new JPanel(new BorderLayout());
+            row.setOpaque(false);
+            row.setBorder(new EmptyBorder(
+                0,
+                msg.kind == MessageKind.SELF ? GRID * 6 : GRID * 2,
+                0,
+                msg.kind == MessageKind.SELF ? GRID * 2 : GRID * 6));
+
+            JPanel aligner = new JPanel(new FlowLayout(
+                msg.kind == MessageKind.SELF ? FlowLayout.RIGHT : FlowLayout.LEFT,
+                0, 0));
+            aligner.setOpaque(false);
+
+            RoundedPanel bubble = new RoundedPanel(16);
+            bubble.setBackground(msg.kind == MessageKind.SELF ? Theme.bubbleSelf : Theme.bubblePeer);
+            bubble.setBorder(new EmptyBorder(4, 9, 6, 9)); // 한 줄짜리 느낌으로 축소
+            bubble.setLayout(new BorderLayout());
+            bubble.setOpaque(false);
+            bubble.setMaximumSize(new Dimension(getBubbleMaxWidth(), Integer.MAX_VALUE)); // 최대 폭만 제한
+
+            JTextArea body = new JTextArea(msg.body);
+            body.setEditable(false);
+            body.setWrapStyleWord(true);
+            body.setLineWrap(true);
+            body.setOpaque(false);
+            body.setBackground(bubble.getBackground()); // 투명 배경 대신 버블 색과 동일하게
+            body.setFont(body.getFont().deriveFont(Font.PLAIN, 14f));
+            body.setForeground(Theme.textPrimary);
+            body.setBorder(new EmptyBorder(0, 0, 0, 0));
+            body.setColumns(20); // 약 20자에서 줄바꿈, 고정 폭 기반
+
+            bubble.add(body, BorderLayout.CENTER);
+            bubble.add(Box.createVerticalStrut(0), BorderLayout.SOUTH); // placeholder to keep layout simple
+
+            aligner.add(bubble);
+            row.add(aligner, BorderLayout.CENTER);
+            return row;
+        }
+
+        private JComponent buildSystemSeparator(ChatMessage msg) {
+            JPanel wrapper = new JPanel();
+            wrapper.setOpaque(false);
+            wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.X_AXIS));
+            wrapper.setBorder(new EmptyBorder(6, GRID * 2, 6, GRID * 2));
+
+            wrapper.add(createLineSegment());
+            wrapper.add(Box.createHorizontalStrut(GRID));
+
+            JLabel text = new JLabel("System - " + msg.time + " " + msg.body);
+            text.setForeground(Theme.textSecondary);
+            text.setFont(text.getFont().deriveFont(Font.BOLD, 12f));
+            wrapper.add(text);
+
+            wrapper.add(Box.createHorizontalStrut(GRID));
+            wrapper.add(createLineSegment());
+            return wrapper;
         }
 
         private void setStatus(String s) {
@@ -770,6 +959,87 @@ public class Main {
             });
         }
 
+        private JComponent createTimePill(String time, boolean isSelf) {
+            RoundedPanel pill = new RoundedPanel(999);
+            pill.setBackground(isSelf ? Theme.timePillSelf : Theme.timePillPeer);
+            pill.setBorder(new EmptyBorder(2, 6, 2, 6)); // pill도 소형화
+            pill.setOpaque(false);
+
+            JLabel label = new JLabel(time);
+            label.setOpaque(false); // prevent white box behind pill text
+            label.setFont(label.getFont().deriveFont(Font.PLAIN, 11f));
+            label.setForeground(Theme.textFaint);
+            pill.add(label);
+            return pill;
+        }
+
+        private JComponent buildGroupHeader(ChatMessage msg) {
+            JPanel row = new JPanel(new FlowLayout(
+                msg.kind == MessageKind.SELF ? FlowLayout.RIGHT : FlowLayout.LEFT,
+                0, 0));
+            row.setOpaque(false);
+
+            JLabel name = new JLabel(msg.sender);
+            name.setForeground(msg.kind == MessageKind.SELF ? Theme.metaSelf : Theme.textSecondary);
+            name.setFont(name.getFont().deriveFont(Font.BOLD, 12f));
+
+            JLabel time = new JLabel(" " + msg.time);
+            time.setForeground(Theme.textSecondary);
+            time.setFont(time.getFont().deriveFont(Font.PLAIN, 11f));
+            time.setBorder(new EmptyBorder(0, 6, 0, 0)); // 이름과 시간 사이 간격
+
+            row.add(name);
+            row.add(time);
+            return row;
+        }
+
+        private JComponent createLineSegment() {
+            JPanel line = new JPanel();
+            line.setOpaque(true);
+            line.setBackground(Theme.divider);
+            line.setPreferredSize(new Dimension(50, 1));
+            line.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
+            return line;
+        }
+
+        private void showInputWarning() {
+            warningLabel.setVisible(true);
+            Border highlight = BorderFactory.createCompoundBorder(
+                new LineBorder(Theme.danger, 1, true),
+                new EmptyBorder(GRID - 1, GRID * 2 - 1, GRID - 1, GRID * 2 - 1));
+            input.setBorder(highlight);
+            input.requestFocusInWindow();
+
+            if (warningTimer != null && warningTimer.isRunning()) {
+                warningTimer.stop();
+            }
+            warningTimer = new Timer(1500, e -> input.setBorder(inputDefaultBorder));
+            warningTimer.setRepeats(false);
+            warningTimer.start();
+        }
+
+        private void clearInputWarning() {
+            warningLabel.setVisible(false);
+            if (warningTimer != null) {
+                warningTimer.stop();
+            }
+            input.setBorder(inputDefaultBorder);
+        }
+
+        private void attachInputWatcher() {
+            input.getDocument().addDocumentListener(new DocumentListener() {
+                private void handle() {
+                    if (input.getText() != null && !input.getText().trim().isEmpty()) {
+                        clearInputWarning();
+                    }
+                }
+
+                @Override public void insertUpdate(DocumentEvent e) { handle(); }
+                @Override public void removeUpdate(DocumentEvent e) { handle(); }
+                @Override public void changedUpdate(DocumentEvent e) { handle(); }
+            });
+        }
+
         private void updateResponsiveLayout() {
             int width = getWidth();
             if (membersColumn != null) {
@@ -779,6 +1049,106 @@ public class Main {
                 serverRail.setVisible(width >= 820);
             }
         }
+
+        private int getBubbleMaxWidth() {
+            int viewportWidth = messageScroll != null && messageScroll.getViewport() != null
+                ? messageScroll.getViewport().getWidth()
+                : 0;
+            int target = viewportWidth > 0 ? (int) (viewportWidth * 0.58) : 380; // 채팅 영역의 약 55~60%
+            return Math.max(240, target);
+        }
+
+        private void applyScrollBarStyling(JScrollPane pane) {
+            JScrollBar vBar = pane.getVerticalScrollBar();
+            if (vBar != null) {
+                vBar.setUI(new DarkScrollBarUI());
+                vBar.setPreferredSize(new Dimension(10, Integer.MAX_VALUE));
+                vBar.setOpaque(false);
+            }
+            JScrollBar hBar = pane.getHorizontalScrollBar();
+            if (hBar != null) {
+                hBar.setPreferredSize(new Dimension(Integer.MAX_VALUE, 10));
+                hBar.setUI(new DarkScrollBarUI());
+                hBar.setOpaque(false);
+            }
+        }
+
+        private Font resolveBaseFont() {
+            Font base = getFont();
+            if (base == null) {
+                base = UIManager.getFont("Label.font");
+            }
+            if (base == null) {
+                base = new Font("Dialog", Font.PLAIN, 14);
+            }
+            return base;
+        }
+
+        private static final class DarkScrollBarUI extends BasicScrollBarUI {
+            @Override
+            protected void configureScrollBarColors() {
+                thumbColor = Theme.scrollThumb;
+                trackColor = Theme.scrollTrack;
+            }
+
+            @Override
+            protected void paintTrack(Graphics g, JComponent c, Rectangle trackBounds) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(Theme.scrollTrack);
+                g2.fillRoundRect(trackBounds.x, trackBounds.y, trackBounds.width, trackBounds.height, 12, 12);
+                g2.dispose();
+            }
+
+            @Override
+            protected void paintThumb(Graphics g, JComponent c, Rectangle thumbBounds) {
+                if (!c.isEnabled() || thumbBounds.isEmpty()) {
+                    return;
+                }
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(Theme.scrollThumb);
+                int arc = 12;
+                g2.fillRoundRect(thumbBounds.x, thumbBounds.y, thumbBounds.width, thumbBounds.height, arc, arc);
+                g2.dispose();
+            }
+
+            @Override
+            protected JButton createDecreaseButton(int orientation) {
+                return zeroButton();
+            }
+
+            @Override
+            protected JButton createIncreaseButton(int orientation) {
+                return zeroButton();
+            }
+
+            private JButton zeroButton() {
+                JButton btn = new JButton();
+                btn.setPreferredSize(new Dimension(0, 0));
+                btn.setMinimumSize(new Dimension(0, 0));
+                btn.setMaximumSize(new Dimension(0, 0));
+                btn.setOpaque(false);
+                btn.setBorder(BorderFactory.createEmptyBorder());
+                return btn;
+            }
+        }
+
+        private static final class ChatMessage {
+            final String sender;
+            final String body;
+            final MessageKind kind;
+            final String time;
+
+            ChatMessage(String sender, String body, MessageKind kind, String time) {
+                this.sender = sender;
+                this.body = body;
+                this.kind = kind;
+                this.time = time;
+            }
+        }
+
+        private enum MessageKind { SELF, PEER, SYSTEM }
     }
 
     private static final class Theme {
@@ -787,10 +1157,19 @@ public class Main {
         private static final Color surfaceElevated = new Color(24, 27, 43);
         private static final Color textPrimary = new Color(233, 235, 245);
         private static final Color textSecondary = new Color(160, 169, 194);
+        private static final Color textFaint = new Color(214, 218, 232);
         private static final Color accent = new Color(99, 111, 255);
         private static final Color accentSoft = new Color(140, 149, 255);
         private static final Color success = new Color(128, 206, 168);
         private static final Color danger = new Color(255, 158, 172);
+        private static final Color bubbleSelf = new Color(78, 103, 238);
+        private static final Color bubblePeer = new Color(37, 41, 61);
+        private static final Color metaSelf = new Color(210, 220, 255);
+        private static final Color timePillSelf = new Color(57, 76, 182);
+        private static final Color timePillPeer = new Color(45, 50, 74);
+        private static final Color divider = new Color(76, 84, 110);
+        private static final Color scrollTrack = new Color(20, 22, 32);
+        private static final Color scrollThumb = new Color(74, 83, 110);
     }
 
     private static final class GradientPanel extends JPanel {
@@ -855,6 +1234,31 @@ public class Main {
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 28, 28);
             g2.dispose();
             super.paintComponent(g);
+        }
+    }
+
+    private static final class PromptTextField extends JTextField {
+        private final String placeholder;
+
+        private PromptTextField(String placeholder) {
+            super();
+            this.placeholder = placeholder;
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            if (getText() == null || getText().isEmpty()) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g2.setColor(Theme.textSecondary);
+                Insets insets = getInsets();
+                Font font = getFont();
+                g2.setFont(font);
+                int y = (getHeight() + font.getSize()) / 2 - 4;
+                g2.drawString(placeholder, insets.left, y);
+                g2.dispose();
+            }
         }
     }
 
