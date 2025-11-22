@@ -18,6 +18,8 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import javax.swing.event.DocumentEvent;
@@ -322,6 +324,9 @@ public class Main {
         private final int port;
         private final String nickname;
         private final ChatClientCore core;
+        private final JCheckBox autoScrollCheck = new JCheckBox("자동 스크롤 활성화", true);
+        private final JCheckBox showSystemCheck = new JCheckBox("시스템 메시지 표시", true);
+        private final JCheckBox soundAlertCheck = new JCheckBox("사운드 알림 사용", false);
 
         private final JPanel messageList = new JPanel();
         private JScrollPane messageScroll;
@@ -426,6 +431,7 @@ public class Main {
                 clearInputWarning();
                 core.send(msg);
                 input.setText("");
+                updateSendButtonState();
                 if ("/quit".equalsIgnoreCase(msg)) {
                     dispose();
                 }
@@ -434,6 +440,7 @@ public class Main {
             sendBtn.addActionListener(e -> sendAction.run());
             input.addActionListener(e -> sendAction.run());
             attachInputWatcher();
+            updateSendButtonState();
 
             addWindowListener(new WindowAdapter() {
                 @Override public void windowClosing(WindowEvent e) {
@@ -505,7 +512,9 @@ public class Main {
             column.setBackground(Theme.surface);
             column.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
             column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
-            column.setPreferredSize(new Dimension(220, Integer.MAX_VALUE));
+            column.setPreferredSize(new Dimension(240, Integer.MAX_VALUE));
+            column.setMaximumSize(new Dimension(260, Integer.MAX_VALUE));
+            column.setMinimumSize(new Dimension(220, 0));
             column.setMaximumSize(new Dimension(260, Integer.MAX_VALUE)); // keep list width bounded without stretching rows
 
             JLabel title = new JLabel("The Lab");
@@ -523,18 +532,25 @@ public class Main {
             column.add(Box.createVerticalStrut(GRID * 2));
 
             column.add(createChannelCategory("IMPORTANT"));
+            column.add(Box.createVerticalStrut(GRID + 2)); // add breathing room under section title
             column.add(createChannelRow("# announcements", false, true));
+            column.add(Box.createVerticalStrut(GRID - 2));
             column.add(createChannelRow("# changelog", false, false));
             column.add(Box.createVerticalStrut(GRID * 2));
 
             column.add(createChannelCategory("GENERAL"));
+            column.add(Box.createVerticalStrut(GRID + 2));
             column.add(createChannelRow("# lobby", true, false));
+            column.add(Box.createVerticalStrut(GRID - 2));
             column.add(createChannelRow("# showcase", false, false));
+            column.add(Box.createVerticalStrut(GRID - 2));
             column.add(createChannelRow("# random", false, true));
             column.add(Box.createVerticalStrut(GRID * 2));
 
             column.add(createChannelCategory("SOCIAL"));
+            column.add(Box.createVerticalStrut(GRID + 2));
             column.add(createChannelRow("# memes", false, false));
+            column.add(Box.createVerticalStrut(GRID - 2));
             column.add(createChannelRow("# music", false, false));
             column.add(Box.createVerticalGlue());
             return column;
@@ -592,17 +608,19 @@ public class Main {
             column.setBackground(Theme.surface);
             column.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
             column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
-            column.setPreferredSize(new Dimension(220, Integer.MAX_VALUE));
+            column.setPreferredSize(new Dimension(240, Integer.MAX_VALUE));
+            column.setMaximumSize(new Dimension(260, Integer.MAX_VALUE));
+            column.setMinimumSize(new Dimension(220, 0));
 
             column.add(createSectionLabel("ONLINE — 3"));
-            column.add(createMemberRow("You", "Owner", Theme.success));
-            column.add(createMemberRow("Aurora", "Moderator", Theme.accentSoft));
-            column.add(createMemberRow("Carter", "Member", new Color(255, 200, 120)));
+            column.add(createMemberRow("You", "Owner", Theme.success, true));
+            column.add(createMemberRow("Aurora", "Moderator", Theme.accentSoft, true));
+            column.add(createMemberRow("Carter", "Member", new Color(255, 200, 120), true));
             column.add(Box.createVerticalStrut(GRID * 2));
 
             column.add(createSectionLabel("OFFLINE"));
-            column.add(createMemberRow("Drew", "Member", Theme.surfaceElevated));
-            column.add(createMemberRow("Mina", "Member", Theme.surfaceElevated));
+            column.add(createMemberRow("Drew", "Member", Theme.surfaceElevated, false));
+            column.add(createMemberRow("Mina", "Member", Theme.surfaceElevated, false));
             column.add(Box.createVerticalGlue());
             return column;
         }
@@ -618,7 +636,10 @@ public class Main {
 
         private JComponent createChannelRow(String name, boolean active, boolean unread) {
             RoundedPanel row = new RoundedPanel(18);
-            row.setBackground(active ? Theme.surfaceElevated : new Color(0, 0, 0, 0));
+            Color baseBg = new Color(255, 255, 255, 12);
+            Color activeBg = adjustColor(Theme.surfaceElevated, 1.08f);
+            Color hoverBg = new Color(255, 255, 255, 28);
+            row.setBackground(active ? activeBg : baseBg);
             row.setBorder(new EmptyBorder(GRID, GRID * 2, GRID, GRID * 2));
             row.setLayout(new BorderLayout(GRID, 0));
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -642,6 +663,19 @@ public class Main {
             } else if (unread) {
                 row.add(createChip("NEW", Theme.accentSoft, Theme.background), BorderLayout.EAST);
             }
+            row.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    row.setBackground(active ? adjustColor(activeBg, 1.05f) : hoverBg);
+                    row.repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    row.setBackground(active ? activeBg : baseBg);
+                    row.repaint();
+                }
+            });
             return row;
         }
 
@@ -654,7 +688,7 @@ public class Main {
             return label;
         }
 
-        private JComponent createMemberRow(String name, String role, Color accent) {
+        private JComponent createMemberRow(String name, String role, Color accent, boolean online) {
             JPanel row = new JPanel(new BorderLayout(GRID, 0));
             row.setOpaque(false);
             row.setBorder(new EmptyBorder(GRID, 0, GRID, 0));
@@ -662,15 +696,12 @@ public class Main {
             row.setPreferredSize(new Dimension(Integer.MAX_VALUE, 60));
             row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60)); // fixed height to avoid stretching
 
-            RoundedPanel avatar = new RoundedPanel(999);
-            avatar.setBackground(accent);
-            avatar.setPreferredSize(new Dimension(36, 36));
-            avatar.setLayout(new BorderLayout());
-
+            AvatarCircle avatar = new AvatarCircle(accent, 32);
             String initial = name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase(Locale.ROOT);
             JLabel avatarLabel = new JLabel(initial, SwingConstants.CENTER);
             avatarLabel.setForeground(Theme.background);
             avatarLabel.setFont(avatarLabel.getFont().deriveFont(Font.BOLD, 13f));
+            avatar.setLayout(new BorderLayout());
             avatar.add(avatarLabel, BorderLayout.CENTER);
 
             JPanel text = new JPanel();
@@ -685,12 +716,55 @@ public class Main {
             roleLabel.setFont(roleLabel.getFont().deriveFont(Font.PLAIN, 12f));
             roleLabel.setForeground(Theme.textSecondary);
 
-            text.add(nameLabel);
+            JPanel nameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            nameRow.setOpaque(false);
+            nameRow.add(createStatusDot(online));
+            nameRow.add(nameLabel);
+
+            text.add(nameRow);
             text.add(roleLabel);
 
             row.add(avatar, BorderLayout.WEST);
             row.add(text, BorderLayout.CENTER);
             return row;
+        }
+
+        private JComponent createStatusDot(boolean online) {
+            RoundedPanel dot = new RoundedPanel(999);
+            dot.setBackground(online ? Theme.success : new Color(109, 114, 130));
+            Dimension d = new Dimension(8, 8);
+            dot.setPreferredSize(d);
+            dot.setMinimumSize(d);
+            dot.setMaximumSize(d);
+            return dot;
+        }
+
+        private static final class AvatarCircle extends JPanel {
+            private final Color fill;
+            private final int size;
+
+            private AvatarCircle(Color fill, int size) {
+                this.fill = fill;
+                this.size = size;
+                setOpaque(false);
+                Dimension d = new Dimension(size, size);
+                setPreferredSize(d);
+                setMinimumSize(d);
+                setMaximumSize(d);
+            }
+
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int d = Math.min(getWidth(), getHeight());
+                int x = (getWidth() - d) / 2;
+                int y = (getHeight() - d) / 2;
+                g2.setColor(fill);
+                g2.fillOval(x, y, d, d);
+                g2.dispose();
+            }
         }
 
         private RoundedPanel createChip(String text, Color bg, Color fg) {
@@ -745,16 +819,55 @@ public class Main {
             bubble.setBackground(color);
             bubble.setPreferredSize(new Dimension(48, 48));
             bubble.setMaximumSize(new Dimension(48, 48));
+            bubble.setMinimumSize(new Dimension(48, 48));
             bubble.setAlignmentX(Component.CENTER_ALIGNMENT);
             bubble.setLayout(new BorderLayout());
             bubble.setToolTipText(tooltip);
+            bubble.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+            Color base = color;
+            Color hover = adjustColor(color, 1.08f);
+            Color pressed = adjustColor(color, 0.92f);
 
             JLabel text = new JLabel(label, SwingConstants.CENTER);
             text.setForeground(Color.WHITE);
             text.setFont(text.getFont().deriveFont(Font.BOLD, 14f));
             bubble.add(text, BorderLayout.CENTER);
 
+            bubble.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    bubble.setBackground(hover);
+                    bubble.repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    bubble.setBackground(base);
+                    bubble.repaint();
+                }
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    bubble.setBackground(pressed);
+                    bubble.repaint();
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    bubble.setBackground(bubble.getBounds().contains(e.getPoint()) ? hover : base);
+                    bubble.repaint();
+                }
+            });
+
             return bubble;
+        }
+
+        private Color adjustColor(Color color, float factor) {
+            int r = Math.min(255, Math.max(0, Math.round(color.getRed() * factor)));
+            int g = Math.min(255, Math.max(0, Math.round(color.getGreen() * factor)));
+            int b = Math.min(255, Math.max(0, Math.round(color.getBlue() * factor)));
+            return new Color(r, g, b, color.getAlpha());
         }
 
         private RoundedPanel buildChannelHeader() {
@@ -772,9 +885,13 @@ public class Main {
             titleRow.add(channelLabel);
             titleRow.add(createPresencePill("3 online"));
 
-            JLabel subtitle = new JLabel("Connected to " + host + ":" + port + " as " + nickname);
+            JLabel subtitle = new JLabel("Connected to " + host + ":" + port);
             subtitle.setFont(subtitle.getFont().deriveFont(Font.PLAIN, 13f));
             subtitle.setForeground(Theme.textSecondary);
+
+            JLabel loginLine = new JLabel("Logged in as " + nickname);
+            loginLine.setFont(loginLine.getFont().deriveFont(Font.PLAIN, 12f));
+            loginLine.setForeground(Theme.textSecondary);
 
             status.setFont(status.getFont().deriveFont(Font.PLAIN, 12f));
             status.setForeground(Theme.textSecondary);
@@ -786,17 +903,93 @@ public class Main {
             text.add(Box.createVerticalStrut(4));
             text.add(subtitle);
             text.add(Box.createVerticalStrut(2));
+            text.add(loginLine);
+            text.add(Box.createVerticalStrut(2));
             text.add(status);
 
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, GRID, 0));
             actions.setOpaque(false);
-            actions.add(new GhostButton("Search"));
-            actions.add(new GhostButton("Pins"));
-            actions.add(new GhostButton("Settings"));
+            GhostButton searchBtn = new GhostButton("Search");
+            GhostButton pinsBtn = new GhostButton("Pins");
+            GhostButton settingsBtn = new GhostButton("Settings");
+            searchBtn.addActionListener(e -> showSearchDialog());
+            settingsBtn.addActionListener(e -> showSettingsDialog());
+            actions.add(searchBtn);
+            actions.add(pinsBtn);
+            actions.add(settingsBtn);
 
             header.add(text, BorderLayout.CENTER);
             header.add(actions, BorderLayout.EAST);
             return header;
+        }
+
+        private void showSearchDialog() {
+            JDialog dialog = new JDialog(this, "Search messages", true);
+            dialog.setLayout(new BorderLayout(GRID, GRID));
+            dialog.getContentPane().setBackground(Theme.surface);
+            JPanel body = new JPanel(new BorderLayout(GRID, GRID));
+            body.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
+            body.setBackground(Theme.surface);
+
+            JTextField query = new JTextField();
+            JButton search = new JButton("Search");
+            JButton close = new JButton("Close");
+            search.addActionListener(e -> JOptionPane.showMessageDialog(dialog,
+                "검색 기능은 추후 구현 예정입니다.",
+                "Search",
+                JOptionPane.INFORMATION_MESSAGE));
+            close.addActionListener(e -> dialog.dispose());
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, GRID, 0));
+            actions.setBackground(Theme.surface);
+            actions.add(search);
+            actions.add(close);
+
+            body.add(query, BorderLayout.CENTER);
+            body.add(actions, BorderLayout.SOUTH);
+            dialog.add(body, BorderLayout.CENTER);
+            dialog.pack();
+            dialog.setLocationRelativeTo(this);
+            dialog.setVisible(true);
+        }
+
+        private void showSettingsDialog() {
+            JDialog dialog = new JDialog(this, "Settings", true);
+            dialog.setLayout(new BorderLayout());
+            JPanel body = new JPanel();
+            body.setOpaque(false);
+            body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+            body.setBorder(new EmptyBorder(GRID * 2, GRID * 2, GRID * 2, GRID * 2));
+
+            for (JCheckBox box : new JCheckBox[] { autoScrollCheck, showSystemCheck, soundAlertCheck }) {
+                if (box.getParent() != null) {
+                    box.getParent().remove(box);
+                }
+                box.setOpaque(false);
+                box.setForeground(Theme.textPrimary);
+                box.setAlignmentX(Component.LEFT_ALIGNMENT);
+                body.add(box);
+                body.add(Box.createVerticalStrut(4));
+            }
+
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, GRID, 0));
+            buttons.setOpaque(false);
+            JButton ok = new JButton("OK");
+            JButton cancel = new JButton("Cancel");
+            ok.addActionListener(e -> dialog.dispose());
+            cancel.addActionListener(e -> dialog.dispose());
+            buttons.add(ok);
+            buttons.add(cancel);
+
+            JPanel container = new JPanel(new BorderLayout());
+            container.setBackground(Theme.surface);
+            container.add(body, BorderLayout.CENTER);
+            container.add(buttons, BorderLayout.SOUTH);
+
+            dialog.setContentPane(container);
+            dialog.pack();
+            dialog.setLocationRelativeTo(this);
+            dialog.setVisible(true);
         }
 
         private void connect() {
@@ -1032,12 +1225,20 @@ public class Main {
                     if (input.getText() != null && !input.getText().trim().isEmpty()) {
                         clearInputWarning();
                     }
+                    updateSendButtonState();
                 }
 
                 @Override public void insertUpdate(DocumentEvent e) { handle(); }
                 @Override public void removeUpdate(DocumentEvent e) { handle(); }
                 @Override public void changedUpdate(DocumentEvent e) { handle(); }
             });
+        }
+
+        private void updateSendButtonState() {
+            String text = input.getText();
+            boolean hasText = text != null && !text.trim().isEmpty();
+            sendBtn.setEnabled(hasText);
+            sendBtn.repaint();
         }
 
         private void updateResponsiveLayout() {
@@ -1207,11 +1408,11 @@ public class Main {
         }
     }
 
-    private static final class AccentButton extends JButton {
-        private AccentButton(String text) {
-            super(text);
-            setFocusPainted(false);
-            setContentAreaFilled(false);
+        private static final class AccentButton extends JButton {
+            private AccentButton(String text) {
+                super(text);
+                setFocusPainted(false);
+                setContentAreaFilled(false);
             setBorderPainted(false);
             setOpaque(false);
             setRolloverEnabled(true);
@@ -1225,11 +1426,16 @@ public class Main {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             Color base = Theme.accent;
-            if (getModel().isPressed()) {
+            boolean enabled = isEnabled();
+            if (!enabled) {
+                base = Theme.accentSoft.brighter();
+            } else if (getModel().isPressed()) {
                 base = base.darker();
             } else if (getModel().isRollover()) {
                 base = base.brighter();
             }
+            int alpha = enabled ? 255 : 140;
+            base = new Color(base.getRed(), base.getGreen(), base.getBlue(), alpha);
             g2.setColor(base);
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 28, 28);
             g2.dispose();
@@ -1262,26 +1468,30 @@ public class Main {
         }
     }
 
-    private static final class GhostButton extends JButton {
-        private GhostButton(String text) {
-            super(text);
-            setFocusPainted(false);
-            setContentAreaFilled(false);
-            setForeground(Theme.textSecondary);
-            setBorder(new EmptyBorder(6, 12, 6, 12));
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        }
+        private static final class GhostButton extends JButton {
+            private GhostButton(String text) {
+                super(text);
+                setFocusPainted(false);
+                setContentAreaFilled(false);
+                setForeground(Theme.textSecondary);
+                setBorder(new EmptyBorder(6, 12, 6, 12));
+                setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            }
 
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int alpha = getModel().isRollover() ? 150 : 90;
-            Color base = new Color(83, 92, 126, alpha);
-            g2.setColor(base);
-            g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
-            g2.dispose();
-            super.paintComponent(g);
+            @Override
+            protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                Color base = new Color(83, 92, 126);
+                boolean pressed = getModel().isPressed();
+                boolean hover = getModel().isRollover();
+                Color tone = pressed ? base.darker() : hover ? base.brighter() : base;
+                int alpha = pressed ? 170 : hover ? 130 : 90;
+                Color fill = new Color(tone.getRed(), tone.getGreen(), tone.getBlue(), alpha);
+                g2.setColor(fill);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
+                g2.dispose();
+                super.paintComponent(g);
+            }
         }
-    }
 }
